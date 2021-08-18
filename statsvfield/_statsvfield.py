@@ -10,6 +10,7 @@ Developed by J. Sai.
 # modules
 import numpy as np
 from scipy.fft import fft, ifft, fftn, ifftn, fftfreq, fftshift, ifftshift
+from scipy.fft import rfftfreq
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 #import seaborn as sns
@@ -47,19 +48,19 @@ class StatsVfield():
 		elif self.ndim == 2:
 			self.nx, self.ny = self.datashape
 			self.x, self.y = axes
-			self.dx = x[1] - x[0]
-			self.dy = y[1] - y[0]
+			self.dx = self.x[1] - self.x[0]
+			self.dy = self.y[1] - self.y[0]
 		elif self.ndim == 3:
 			self.nx, self.ny, self.nz = self.datashape
 			self.x, self.y, self.z = axes
-			self.dx = x[1] - x[0]
-			self.dy = y[1] - y[0]
-			self.dz = z[1] - z[0]
+			self.dx = self.x[1] - self.x[0]
+			self.dy = self.y[1] - self.y[0]
+			self.dz = self.z[1] - self.z[0]
 		elif self.ndim > 3:
 			print ('ERROR: Dimension must be <= 3.')
 			return
 
-		self.tau_x = None
+		self.tau_x = []
 
 
 	def calc_sf(self, p_order=2):
@@ -71,31 +72,90 @@ class StatsVfield():
 			print ('3D is being developed.')
 			return
 
-		if self.tau_x:
-			pass
-		else:
+		if len(self.tau_x) == 0:
 			self.get_tau()
 
-	def calc_ac(self, method='FFT'):
-		if self.ndim == 1:
-			self.acf = ac_fft1(self.data)
-		elif self.ndim == 2:
-			self.acf = ac_fft2(self.data)
 
-		if self.tau_x:
-			pass
-		else:
+	def calc_ac(self, method='FFT', realfreq=False):
+		if self.ndim == 1:
+			if method == 'FFT':
+				self.acf = ac_fft1(self.data, realfreq=realfreq)
+			elif method == 'iterative':
+				self.acf = ac_1d(self.data)
+		elif self.ndim == 2:
+			if method == 'FFT':
+				self.acf = ac_fft2(self.data)
+			elif method == 'iterative':
+				self.acf = ac_2d(self.data)
+
+		if len(self.tau_x) == 0:
 			self.get_tau()
 
-	def get_tau(self):
+
+	def calc_ps(self, method='FFT', realfreq=False):
 		if self.ndim == 1:
-			self.tau_x = np.arange(0, self.nx, 1)*self.dx
+			self.ps = pspec_1d(self.data, realfreq=realfreq)
 		elif self.ndim == 2:
-			self.tau_x = np.arange(0, self.nx, 1)*self.dx
-			self.tau_y = np.arange(0, self.ny, 1)*self.dy
+			print ('Still being developed, sorry.')
+			#self.ps = pspec_2d(self.data, realfreq=realfreq)
+
+		if realfreq:
+			self.freq_x = rfftfreq(self.nx + self.nx - 1, self.dx) # nx -1 is for zero-padding
+		else:
+			self.freq_x = fftshift(fftfreq(self.nx + self.nx - 1, self.dx))
+
+		print(len(self.ps), len(self.freq_x))
+
+
+	def get_tau(self, realfreq=False):
+		if self.ndim == 1:
+			if realfreq:
+				self.tau_x = np.arange(0, self.nx, 1)*self.dx
+			else:
+				self.tau_x = np.concatenate([np.arange(-(self.nx - 1), 0, 1)*self.dx, np.arange(0, self.nx, 1)*self.dx])
+		elif self.ndim == 2:
+			self.tau_x = np.concatenate([np.arange(-(self.nx - 1), 0, 1)*self.dx, np.arange(0, self.nx, 1)*self.dx])
+			self.tau_y = np.concatenate([np.arange(-(self.ny - 1), 0, 1)*self.dy, np.arange(0, self.ny, 1)*self.dy])
 		elif self.ndim == 3:
 			print ('3D is being developed.')
 			return
+
+
+	def sf_plawfit(self, pini, taurange=[], cutzero=True):
+		'''
+		'''
+
+		from scipy.optimize import leastsq
+
+		# fit function
+		# power law
+		plaw    = lambda x, param: param[0]*(x**(param[1]))
+		errfunc = lambda param, x, y: plaw(x, param) - y
+		#res = leastsq(errfunc, [1e-3, -3], args=(freq_fft[1:], np.abs(res_spec[1:])**2.))
+
+		# linear
+		fln      = lambda x, param: param[0] + param[1]*x
+		errfunc2 = lambda param, x, y: fln(x, param) - y
+
+		# fit param
+		if cutzero:
+			tau_fit = self.tau_x[1:]
+			sf_fit  = self.sf[1:]
+		else:
+			tau_fit = self.tau_x
+			sf_fit  = self.sf
+
+		# fitting range
+		if len(taurange) == 2:
+			where_fit = (tau_fit > taurange[0]) & (tau_fit <= taurange[-1])
+			sf_fit    = sf_fit[where_fit]
+			tau_fit   = tau_fit[where_fit]
+
+		#res = leastsq(errfunc2, [-3, -3], args=(np.log10(tau_sf[where_fit]), np.log10(sf_slice[where_fit])))
+		#p_out = res[0]
+		res = leastsq(errfunc2, pini, args=(np.log10(tau_fit), np.log10(sf_fit)))
+		pout = res[0]
+		self.fit_results = dict({'pini': pini, 'pout': pout})
 
 
 
@@ -125,39 +185,6 @@ def gaussian2D(x, y, A, mx, my, sigx, sigy, pa=0, peak=True):
 	expy = np.exp(-(y-my)*(y-my)/(2.0*sigy*sigy))
 	gauss=coeff*expx*expy
 	return gauss
-
-
-# 2D rotation
-def rotate2d(x, y, angle, deg=True, coords=False):
-	'''
-	Rotate Cartesian coordinates.
-	Right hand direction will be positive.
-
-	array2d: input array
-	angle: rotational angle [deg or radian]
-	axis: rotatinal axis. (0,1,2) mean (x,y,z). Default x.
-	deg (bool): If True, angle will be treated as in degree. If False, as in radian.
-	'''
-
-	# degree --> radian
-	if deg:
-		angle = np.radians(angle)
-	else:
-		pass
-
-	if coords:
-		angle = -angle
-	else:
-		pass
-
-	cos = np.cos(angle)
-	sin = np.sin(angle)
-
-	xrot = x*cos - y*sin
-	yrot = x*sin + y*cos
-
-	return xrot, yrot
-
 
 
 # main functions
@@ -209,7 +236,7 @@ def ac_fft1(data, realfreq=False):
 	return d_ac
 
 
-def ac_2d(data, normalize=False):
+def ac_2d(data):
 	'''
 	Calculate auto-correlation.
 
@@ -222,25 +249,42 @@ def ac_2d(data, normalize=False):
 	'''
 
 	nx, ny = data.shape
-	m_data = np.nanmean(data)
+
+	# zero-padding for convolution
+	d_in = data.copy() - np.nanmean(data)
+	d_in = np.r_[d_in, np.zeros((d_in.shape[0]-1,d_in.shape[1]))]
+	d_in = np.c_[d_in, np.zeros((d_in.shape[0],d_in.shape[1]-1))]
+
+	d_shift = data.copy() - np.nanmean(data)
+	d_shift = np.r_[np.zeros((d_shift.shape[0]-1,d_shift.shape[1])), d_shift]
+	d_shift = np.c_[np.zeros((d_shift.shape[0],d_shift.shape[1]-1)), d_shift]
+
+	# replace zero with nan to skip
+	d_in[d_in == 0.] = np.nan
+	d_shift[d_shift == 0.] = np.nan
+
+	# autocorrelation
+	nx_out = 2*nx - 1
+	ny_out = 2*ny - 1
 
 	d_ac = np.array([
-		[np.nanmean([
-			(data[i,j] - m_data)*(data[i+k, j+l] - m_data)
-			for j in range(ny - l) for i in range(nx - k)])#/((nx-k)*(ny-l))
-		for l in range(ny)] for k in range(nx)])
-	d_ac /= np.nanvar(data)
+		[np.nanmean(
+			d_in[:nx_out - k, :ny_out - l] * d_shift[k:nx_out, l:ny_out])
+		for l in range(ny_out)] for k in range(nx_out)])
 
-	if normalize:
-		d_ac /= d_ac[0,0]
+	d_ac /= np.nanvar(data)
 
 	return d_ac
 
 
-def ac_fft2(data, realfreq=False):
+def ac_fft2(data):
 	nx, ny = data.shape
 
-	d_in = data - np.nanmean(data)
+	d_in = data.copy()
+	d_in[np.isnan(d_in)] = 0. # fill nan with zero
+	d_in -= np.nanmean(data)
+
+	# zero-padding
 	d_in = np.r_[d_in, np.zeros((d_in.shape[0]-1,d_in.shape[1]))] # zero-padding for convolution
 	d_in = np.c_[d_in, np.zeros((d_in.shape[0],d_in.shape[1]-1))] # zero-padding for convolution
 
@@ -255,13 +299,13 @@ def ac_fft2(data, realfreq=False):
 	wxx, wyy = np.meshgrid(wx, wy)
 	d_ac /= (wxx*wyy)*np.nanvar(data)
 
-	if realfreq:
-		print("Resultant ACF has only the positive axis.")
-		print("The output axis length is nx/2.")
-		d_ac = d_ac[0:d_ac.shape[1]//2+1,0:d_ac.shape[0]//2+1]
-	else:
-		#pass
-		d_ac = ifftshift(d_ac)
+	#if realfreq:
+	#	print("Resultant ACF has only the positive axis.")
+	#	print("The output axis length is nx/2.")
+	#	d_ac = d_ac[0:d_ac.shape[1]//2+1,0:d_ac.shape[0]//2+1]
+	#else:
+
+	d_ac = ifftshift(d_ac)
 
 	return d_ac
 
@@ -303,16 +347,70 @@ def sf_2d(data, normalize=False):
 
 	nx, ny = data.shape
 
-	d_sf = np.array([
-		[np.sum([
-			(data[i,j] - data[i+k, j+l])**2.
-			for j in range(ny - l) for i in range(nx - k)])/((nx-k)*(ny-l))
-		for l in range(ny)] for k in range(nx)])
+	# zero-padding for convolution
+	d_in = data.copy() - np.nanmean(data)
+	d_in = np.r_[d_in, np.zeros((d_in.shape[0]-1,d_in.shape[1]))]
+	d_in = np.c_[d_in, np.zeros((d_in.shape[0],d_in.shape[1]-1))]
+
+	d_shift = data.copy() - np.nanmean(data)
+	d_shift = np.r_[np.zeros((d_shift.shape[0]-1,d_shift.shape[1])), d_shift]
+	d_shift = np.c_[np.zeros((d_shift.shape[0],d_shift.shape[1]-1)), d_shift]
+
+	# replace zero with nan to skip
+	d_in[d_in == 0.] = np.nan
+	d_shift[d_shift == 0.] = np.nan
+
+	# structure function
+	nx_out = 2*nx - 1
+	ny_out = 2*ny - 1
+
+	d_sf = np.array([[
+		np.nanmean(
+			(d_in[:nx_out - k, :ny_out - l] - d_shift[k:nx_out, l:ny_out])**2. )
+		for l in range(ny_out)] for k in range(nx_out)])
 
 	if normalize:
 		d_sf /= d_sf[0,0]
 
 	return d_sf
+
+
+def pspec_1d(data, realfreq=False):
+	'''
+	Calculate Power-spectrum using FFT.
+	'''
+
+	nx = len(data)
+	d_in = np.r_[data - np.nanmean(data), np.zeros(nx-1)] # zero-padding
+
+	d_ft = fft(d_in)                     # Fourier transform
+	d_ft_cnj = np.conjugate(fft(d_in))   # complex conjugate
+
+	d_ps = (d_ft*d_ft_cnj).real # Power spectrum
+
+	if realfreq:
+		d_ps = d_ps[:len(d_ps)//2+1]
+	else:
+		d_ps = fftshift(d_ps)
+
+	return d_ps
+
+
+def binning(bin_e, coordinates, data):
+	'''
+	Binning data according to given bins and a set of coordinates and data.
+
+	'''
+	#bin_c = 0.5 .*(bin_e[2:length(bin_e)] .+ bin_e[1:length(bin_e)-1])
+	d_bin = np.zeros(len(bin_e)-1)
+	for i in range(len(bin_e)-1):
+		indx = np.where( (coordinates >= bin_e[i]) & (coordinates < bin_e[i+1]))
+		if len(indx[0]) == 0:
+			d_bin[i] = np.nan
+		else:
+			d_bin[i] = np.nanmean(data[indx])
+
+	return d_bin
 
 
 # for debug
