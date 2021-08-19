@@ -112,3 +112,13 @@ class TurbModel():
 
 	def getvfield_3d(self, pk=2., c=1., fix_amp=False, fix_phase=False):
 		print ('Still being developed. Sorry.')
+
+
+	def smoothing(self, size, kernel='gauss'):
+		from .modelfuncs import gaussian
+		from astropy.convolution import convolve_fft
+
+		beam = gaussian(self.x, 1, 0, size)
+		beam /= np.sum(beam) # normalize
+		v_smoothed = convolve_fft(self.vx, beam, nan_treatment='fill')
+		self.vx_sm = v_smoothed

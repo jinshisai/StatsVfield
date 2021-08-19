@@ -1,9 +1,11 @@
 '''
 Python script to calculate statistic functions
- like the autocorrelation function and the second-order structure function.
+ like the autocorrelation function (ACF), the second-order structure function (SF)
+ and so on.
 
 Developed by J. Sai.
 7/23/2021
+8/19/2021
 '''
 
 
@@ -64,6 +66,20 @@ class StatsVfield():
 
 
 	def calc_sf(self, p_order=2):
+		'''
+		Calculate the second-order structure function (SF).
+		 Other orders will be supported in future.
+
+		Usage
+		-----
+		vf = StatsVfield(data, axes)
+		vf.calc_sf()
+		vf.sf # call the calculated SF
+
+		Parameters
+		----------
+		 - p_order: Order of the structuer function. Currently not used.
+		'''
 		if self.ndim == 1:
 			self.sf = sf_1d(self.data)
 		elif self.ndim == 2:
@@ -72,27 +88,48 @@ class StatsVfield():
 			print ('3D is being developed.')
 			return
 
-		if len(self.tau_x) == 0:
-			self.get_tau()
+		self.get_tau(realfreq=True)
 
 
 	def calc_ac(self, method='FFT', realfreq=False):
+		'''
+		Calculate autocorrelation (AC).
+
+		Usage
+		-----
+		vf = StatsVfield(data, axes)
+		vf.calc_ac()
+		vf.acf # call the calculated ACF
+
+		Parameters
+		----------
+		 - method: Calculation ways; FFT or iterative. FFT mode uses Fast Fourier Transform, while
+		  iterative mode calculates ACF iteratively sliding an input data set.
+		 - realfreq: If True, only ACF within positive tau will be return. Option only for in one-dimensional data set.
+		'''
 		if self.ndim == 1:
 			if method == 'FFT':
 				self.acf = ac_fft1(self.data, realfreq=realfreq)
 			elif method == 'iterative':
-				self.acf = ac_1d(self.data)
+				self.acf = ac_1d(self.data, realfreq=realfreq)
 		elif self.ndim == 2:
 			if method == 'FFT':
 				self.acf = ac_fft2(self.data)
 			elif method == 'iterative':
 				self.acf = ac_2d(self.data)
 
-		if len(self.tau_x) == 0:
-			self.get_tau()
+		#if len(self.tau_x) == 0:
+		self.get_tau(realfreq=realfreq)
 
 
 	def calc_ps(self, method='FFT', realfreq=False):
+		'''
+		Calculate power-spectrum (PS). Still under development.
+
+		Usage
+		-----
+		Coming soon..
+		'''
 		if self.ndim == 1:
 			self.ps = pspec_1d(self.data, realfreq=realfreq)
 		elif self.ndim == 2:
@@ -104,10 +141,17 @@ class StatsVfield():
 		else:
 			self.freq_x = fftshift(fftfreq(self.nx + self.nx - 1, self.dx))
 
-		print(len(self.ps), len(self.freq_x))
+		#print(len(self.ps), len(self.freq_x))
 
 
 	def get_tau(self, realfreq=False):
+		'''
+		Get tau for ACF and SF.
+
+		Parameters
+		----------
+		 - realfreq: For one-dimensional data set, if True, only positive tau will be returned.
+		'''
 		if self.ndim == 1:
 			if realfreq:
 				self.tau_x = np.arange(0, self.nx, 1)*self.dx
@@ -119,6 +163,7 @@ class StatsVfield():
 		elif self.ndim == 3:
 			print ('3D is being developed.')
 			return
+
 
 
 	def sf_plawfit(self, pini, taurange=[], cutzero=True):
@@ -189,7 +234,7 @@ def gaussian2D(x, y, A, mx, my, sigx, sigy, pa=0, peak=True):
 
 # main functions
 # autocorrelation function
-def ac_1d(data):
+def ac_1d(data, realfreq=True):
 	'''
 	Calculate auto-correlation.
 
@@ -203,12 +248,26 @@ def ac_1d(data):
 	#from itertools import product
 
 	nx   = len(data)
-	d_in = data - np.nanmean(data)
+	d_in = data.copy() - np.nanmean(data)
 
-	# auto-correlation
-	d_ac = np.array(
-		[np.sum([d_in[i]*d_in[i+j] for i in range(nx-j)])/(nx-j)
-		for j in range(nx)])/np.nanvar(data)
+	if realfreq:
+		# auto-correlation
+		d_ac = np.array([
+			np.nanmean(d_in[0:nx-j]*d_in[j:nx]) for j in range(nx)])/np.nanvar(data)
+	else:
+		# zero-padding
+		d_in = np.concatenate([d_in, np.zeros(nx-1)])
+		d_shift = data.copy() - np.nanmean(data)
+		d_shift = np.concatenate([np.zeros(nx-1), d_shift])
+
+		# replace zero with nan to skip
+		d_in[d_in == 0.] = np.nan
+		d_shift[d_shift == 0.] = np.nan
+
+		nx_out = 2*nx - 1
+		d_ac = np.array([
+			np.nanmean(d_in[0:nx_out-i]*d_shift[i:nx_out]) for i in range(nx_out)
+			])/np.nanvar(data)
 
 	return d_ac
 
@@ -225,7 +284,7 @@ def ac_fft1(data, realfreq=False):
 	d_ft_cnj = np.conjugate(fft(d_in))   # complex conjugate
 
 	d_ac = ifft(d_ft*d_ft_cnj).real
-	d_ac /= np.r_[np.arange(1,len(d_ac)//2+2,1)[::-1], np.arange(1,len(d_ac)//2+1,1)] # weighting
+	d_ac /= np.r_[np.arange(1,nx+1,1)[::-1], np.arange(1,nx,1)] # weighting
 	d_ac /= np.nanvar(data)
 
 	if realfreq:
@@ -294,8 +353,12 @@ def ac_fft2(data):
 
 	# weighting with sample number
 	#print(d_ac.shape[0], nx)
-	wx = np.r_[np.arange(1, d_ac.shape[0]//2+2, 1)[::-1], np.arange(1,d_ac.shape[0]//2+1,1)]
-	wy = np.r_[np.arange(1, d_ac.shape[1]//2+2, 1)[::-1], np.arange(1,d_ac.shape[1]//2+1,1)]
+	wx = np.concatenate([np.arange(1, nx+1, 1), np.arange(nx-1, 0, -1)])
+	wx = ifftshift(wx)
+	wy = np.concatenate([np.arange(1, ny+1, 1), np.arange(ny-1, 0, -1)])
+	wy = ifftshift(wy)
+	#wx = np.r_[np.arange(1, d_ac.shape[0]//2+2, 1)[::-1], np.arange(1,d_ac.shape[0]//2+1,1)]
+	#wy = np.r_[np.arange(1, d_ac.shape[1]//2+2, 1)[::-1], np.arange(1,d_ac.shape[1]//2+1,1)]
 	wxx, wyy = np.meshgrid(wx, wy)
 	d_ac /= (wxx*wyy)*np.nanvar(data)
 
@@ -326,8 +389,7 @@ def sf_1d(data):
 	nx = len(data)
 
 	d_sf = np.array([
-		np.sum([(data[i] - data[i+j])**2. for i in range(nx-j)])/(nx-j)
-		for j in range(nx)
+		np.nanmean((data[:nx-i] - data[i:nx])**2.) for i in range(nx)
 		])
 
 	return d_sf
