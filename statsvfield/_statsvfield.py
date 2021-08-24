@@ -23,10 +23,11 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 # Class StatsVF
 class StatsVfield():
 
-	def __init__(self, data, axes) -> None:
+	def __init__(self, data, axes, derr=[]) -> None:
 		self.data      = data
 		self.datashape = data.shape
 		self.ndim      = len(data.shape)
+		self.derr      = derr
 
 		if type(axes) == list:
 			if len(axes) != self.ndim:
@@ -81,7 +82,10 @@ class StatsVfield():
 		 - p_order: Order of the structuer function. Currently not used.
 		'''
 		if self.ndim == 1:
-			self.sf = sf_1d(self.data)
+			if len(self.derr) == 0:
+				self.sf = sf_1d(self.data)
+			else:
+				self.sf, self.sf_err = sf_1d(self.data, derr=self.derr)
 		elif self.ndim == 2:
 			self.sf = sf_2d(self.data)
 		elif self.ndim == 3:
@@ -111,7 +115,10 @@ class StatsVfield():
 			if method == 'FFT':
 				self.acf = ac_fft1(self.data, realfreq=realfreq)
 			elif method == 'iterative':
-				self.acf = ac_1d(self.data, realfreq=realfreq)
+				if len(self.derr) == 0:
+					self.acf = ac_1d(self.data, realfreq=realfreq)
+				else:
+					self.acf, self.acf_err = ac_1d(self.data, derr=self.derr, realfreq=realfreq)
 		elif self.ndim == 2:
 			if method == 'FFT':
 				self.acf = ac_fft2(self.data)
@@ -234,7 +241,7 @@ def gaussian2D(x, y, A, mx, my, sigx, sigy, pa=0, peak=True):
 
 # main functions
 # autocorrelation function
-def ac_1d(data, realfreq=True):
+def ac_1d(data, derr=[], realfreq=True):
 	'''
 	Calculate auto-correlation.
 
@@ -269,7 +276,33 @@ def ac_1d(data, realfreq=True):
 			np.nanmean(d_in[0:nx_out-i]*d_shift[i:nx_out]) for i in range(nx_out)
 			])/np.nanvar(data)
 
-	return d_ac
+	if len(derr) == 0:
+		return d_ac
+	else:
+		# error propagation
+		if realfreq:
+			d_in_err = derr.copy() # assuming error of mean can be ignored
+			d_ac_err = np.array([
+				np.sqrt(np.nansum((d_in[0:nx-j]*d_in_err[j:nx])**2\
+					+ (d_in[j:nx]*d_in_err[0:nx-j])**2 ))\
+					/np.count_nonzero(~np.isnan(d_in[0:nx-j]*d_in[j:nx])) for j in range(nx)])/np.nanvar(data)
+		else:
+			# zero-padding
+			d_in_err    = np.concatenate([derr, np.zeros(nx-1)])
+			d_shift_err = np.concatenate([np.zeros(nx-1), derr])
+			d_in_err[d_in_err == 0.]       = np.nan
+			d_shift_err[d_shift_err == 0.] = np.nan
+
+			# error of each element:
+			#  (m1 +/- sig1)*(m2 +/- sig2) = m1*m2 +/- sqrt((m1*sig2)^2 + (m2*sig1)^2)
+			# error of mean
+			#  sqrt(Sum(sig_i^2))/N
+			d_ac_err = np.array([
+				np.sqrt(np.nansum((d_in[0:nx_out-i]*d_shift_err[i:nx_out])**2 \
+					+ (d_in_err[0:nx_out-i]*d_shift[i:nx_out])**2))\
+				/np.count_nonzero(~np.isnan(d_in[0:nx_out-i]*d_shift[i:nx_out])) for i in range(nx_out)
+				])/np.nanvar(data)
+		return d_ac, d_ac_err
 
 
 def ac_fft1(data, realfreq=False):
@@ -374,7 +407,7 @@ def ac_fft2(data):
 
 
 # structure function
-def sf_1d(data):
+def sf_1d(data, derr=[]):
 	'''
 	Calculate the structure function.
 
@@ -392,7 +425,16 @@ def sf_1d(data):
 		np.nanmean((data[:nx-i] - data[i:nx])**2.) for i in range(nx)
 		])
 
-	return d_sf
+	if len(derr) == 0:
+		return d_sf
+	else:
+		# error propagation
+		d_sf_err = np.array([
+			np.sqrt(np.nansum((4.* (data[:nx-i] - data[i:nx])**2. * (derr[:nx-i]**2 + derr[i:nx]**2.))))\
+			/np.count_nonzero(~np.isnan((data[:nx-i] - data[i:nx]))) for i in range(nx)
+			])
+
+		return d_sf, d_sf_err
 
 
 def sf_2d(data, normalize=False):
