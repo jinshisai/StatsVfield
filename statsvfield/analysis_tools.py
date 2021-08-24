@@ -22,7 +22,7 @@ def binning(bin_e, coordinates, data):
 
 
 
-def plawfit(x, y, pini, xlim=[], cutzero=True):
+def plawfit(x, y, pini, sig=1, xlim=[], cutzero=True, mode='lin'):
 	'''
 	'''
 
@@ -31,25 +31,63 @@ def plawfit(x, y, pini, xlim=[], cutzero=True):
 	# fit function
 	# power law
 	plaw    = lambda x, param: param[0]*(x**(param[1]))
-	errfunc = lambda param, x, y: plaw(x, param) - y
+	errfunc = lambda param, x, y, sig: (plaw(x, param) - y)/sig
 	#res = leastsq(errfunc, [1e-3, -3], args=(freq_fft[1:], np.abs(res_spec[1:])**2.))
 
 	# linear
 	fln      = lambda x, param: param[0] + param[1]*x
-	errfunc2 = lambda param, x, y: fln(x, param) - y
+	errfunc2 = lambda param, x, y, sig: (fln(x, param) - y)/sig
 
 	# fitting range
 	if len(xlim) == 2:
 		where_fit = (x > xlim[0]) & (x <= xlim[-1])
 		y_fit     = y[where_fit]
 		x_fit     = x[where_fit]
+
+		if type(sig).__name__ == 'ndarray':
+			sig_fit = sig[where_fit]
+		elif type(sig) == float:
+			sig_fit = sig
 	else:
 		y_fit = y
 		x_fit = x
+		sig_fit = sig
 
-	#res = leastsq(errfunc2, [-3, -3], args=(np.log10(tau_sf[where_fit]), np.log10(sf_slice[where_fit])))
-	#p_out = res[0]
-	res = leastsq(errfunc2, pini, args=(np.log10(x_fit), np.log10(y_fit)))
-	pout = res[0]
+	if mode == 'lin':
+		res = leastsq(errfunc, pini, args=(x_fit, y_fit, sig), full_output=True)
+		pout = res[0]
+		pcov = res[1]
+		chi2 = np.sum(errfunc(pout, x_fit, y_fit, sig_fit)**2.)
+	elif mode == 'log':
+		res = leastsq(errfunc2, pini,
+		args=(np.log10(x_fit), np.log10(y_fit), sig_fit/(y_fit*np.log(10))),
+		full_output=True)
+		pout = res[0]
+		pcov = res[1]
+		chi2 = np.sum(errfunc2(pout, np.log10(x_fit), np.log10(y_fit), sig_fit/(y_fit*np.log(10)))**2.)
+	else:
+		print('ERROR\tplawfit: mode must be lin or log.')
+		return
 
-	return pout
+	ndata  = len(x_fit)
+	nparam = len(pout)
+	dof    = ndata - nparam - 1
+	reduced_chi2 = chi2/dof
+
+	# parameter errors
+	if (dof >= 0) and (pcov is not None):
+		pcov = pcov*reduced_chi2
+	else:
+		pcov = np.full((nparam, nparam),np.inf)
+
+	perr = np.array([
+		np.abs(pcov[j][j])**0.5 for j in range(nparam)
+		])
+
+	print('Power-law fit')
+	print('pini: (c, p) = (%.4e, %.4e)'%(pini[0], pini[1]))
+	print('pout: (c, p) = (%.4e, %.4e)'%(pout[0], pout[1]))
+	print('perr: (sig_c, sig_p) = (%.4e, %.4e)'%(perr[0], perr[1]))
+	print('reduced chi^2: %.4f'%reduced_chi2)
+
+	return pout, perr
