@@ -171,6 +171,22 @@ class StatsVfield():
 			print ('3D is being developed.')
 			return
 
+	def get_tauzero(self):
+
+		if self.ndim == 2:
+			print ('Currently get_tauzero only supports one-dimensional data.')
+			return
+
+		if 'acf' in self.__dict__.keys():
+			indx = [i for i in range(len(self.acf)-1) if self.acf[i]*self.acf[i+1] <=0]
+			if len(indx) > 0:
+				indx_tau0 = indx[0]
+				self.tau0 = self.tau_x[indx_tau0]
+			else:
+				self.tau0 = np.nan
+		else:
+			print ('ACF is not found. Calculate ACF first by vf.calc_ac().')
+			return
 
 
 	def sf_plawfit(self, pini, taurange=[], cutzero=True):

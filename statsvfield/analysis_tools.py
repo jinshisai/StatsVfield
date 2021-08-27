@@ -22,7 +22,7 @@ def binning(bin_e, coordinates, data):
 
 
 
-def plawfit(x, y, pini, sig=1, xlim=[], cutzero=True, mode='lin'):
+def plawfit(x, y, pini, sig=None, xlim=[], cutzero=True, mode='lin', printres=True):
 	'''
 	'''
 
@@ -46,7 +46,7 @@ def plawfit(x, y, pini, sig=1, xlim=[], cutzero=True, mode='lin'):
 
 		if type(sig).__name__ == 'ndarray':
 			sig_fit = sig[where_fit]
-		elif type(sig) == float:
+		else:
 			sig_fit = sig
 	else:
 		y_fit = y
@@ -54,14 +54,22 @@ def plawfit(x, y, pini, sig=1, xlim=[], cutzero=True, mode='lin'):
 		sig_fit = sig
 
 	if mode == 'lin':
-		res = leastsq(errfunc, pini, args=(x_fit, y_fit, sig), full_output=True)
+		if type(sig).__name__ == 'NoneType':
+			sig_fit = 1
+		res = leastsq(errfunc, pini, args=(x_fit, y_fit, sig_fit), full_output=True)
 		pout = res[0]
 		pcov = res[1]
 		chi2 = np.sum(errfunc(pout, x_fit, y_fit, sig_fit)**2.)
 	elif mode == 'log':
-		res = leastsq(errfunc2, pini,
-		args=(np.log10(x_fit), np.log10(y_fit), sig_fit/(y_fit*np.log(10))),
-		full_output=True)
+		if type(sig).__name__ == 'NoneType':
+			sig_fit = 1
+			res = leastsq(errfunc2, pini,
+				args=(np.log10(x_fit), np.log10(y_fit), sig_fit),
+				full_output=True)
+		else:
+			res = leastsq(errfunc2, pini,
+				args=(np.log10(x_fit), np.log10(y_fit), sig_fit/(y_fit*np.log(10))),
+				full_output=True)
 		pout = res[0]
 		pcov = res[1]
 		chi2 = np.sum(errfunc2(pout, np.log10(x_fit), np.log10(y_fit), sig_fit/(y_fit*np.log(10)))**2.)
@@ -84,10 +92,11 @@ def plawfit(x, y, pini, sig=1, xlim=[], cutzero=True, mode='lin'):
 		np.abs(pcov[j][j])**0.5 for j in range(nparam)
 		])
 
-	print('Power-law fit')
-	print('pini: (c, p) = (%.4e, %.4e)'%(pini[0], pini[1]))
-	print('pout: (c, p) = (%.4e, %.4e)'%(pout[0], pout[1]))
-	print('perr: (sig_c, sig_p) = (%.4e, %.4e)'%(perr[0], perr[1]))
-	print('reduced chi^2: %.4f'%reduced_chi2)
+	if printres:
+		print('Power-law fit')
+		print('pini: (c, p) = (%.4e, %.4e)'%(pini[0], pini[1]))
+		print('pout: (c, p) = (%.4e, %.4e)'%(pout[0], pout[1]))
+		print('perr: (sig_c, sig_p) = (%.4e, %.4e)'%(perr[0], perr[1]))
+		print('reduced chi^2: %.4f'%reduced_chi2)
 
 	return pout, perr
