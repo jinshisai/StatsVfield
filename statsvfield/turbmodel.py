@@ -9,15 +9,21 @@ from scipy.fft import fftshift, ifftshift
 
 class TurbModel():
 
-	def __init__(self, ngrid: int = 32, ndim: int = 3, lam_max: float = 0.2, lam_min=None):
+	def __init__(self, ngrid: int = 32, ndim: int = 3, lmax: float = 0.2,
+		lam_max=None, lam_min=None):
 		self.ngrid = ngrid
 		self.ndim  = ndim
-		self.lam_max = lam_max
+		self.lmax  = lmax
+
+		if lam_max:
+			self.lam_max = lam_max
+		else:
+			self.lam_max = lmax
 
 		if lam_min:
 			self.lam_min = lam_min
 		else:
-			self.lam_min = 2.*lam_max/ngrid # Nyquist theorem
+			self.lam_min = 2.*lmax/ngrid # Nyquist theorem
 
 		if ndim == 1:
 			self.makegrid_1d()
@@ -26,8 +32,8 @@ class TurbModel():
 
 	def makegrid_1d(self):
 		# grid in x-space
-		dx = self.lam_min/2.0 # delta x = 1/(2 kmax)
 		nx = self.ngrid
+		dx = self.lmax/nx
 		x  = np.arange(-nx//2, nx//2 +1, 1)*dx # pixel
 		if nx % 2 == 0:
 			x_e = np.arange(-nx//2,nx//2+1,1)
