@@ -22,7 +22,7 @@ def binning(bin_e, coordinates, data):
 
 
 
-def plawfit(x, y, pini, sig=None, xlim=[], cutzero=True, mode='lin', printres=True):
+def plawfit(x, y, pini, sig=None, xlim=[], cutzero=True, x0=None, mode='lin', printres=True):
 	'''
 	'''
 
@@ -30,13 +30,13 @@ def plawfit(x, y, pini, sig=None, xlim=[], cutzero=True, mode='lin', printres=Tr
 
 	# fit function
 	# power law
-	plaw    = lambda x, param: param[0]*(x**(param[1]))
-	errfunc = lambda param, x, y, sig: (plaw(x, param) - y)/sig
+	plaw    = lambda x, x0, param: param[0]*((x/x0)**(param[1]))
+	errfunc = lambda param, x, y, sig, x0: (plaw(x, x0, param) - y)/sig
 	#res = leastsq(errfunc, [1e-3, -3], args=(freq_fft[1:], np.abs(res_spec[1:])**2.))
 
 	# linear
-	fln      = lambda x, param: param[0] + param[1]*x
-	errfunc2 = lambda param, x, y, sig: (fln(x, param) - y)/sig
+	fln      = lambda x, x0, param: param[0] + param[1]*(x - x0)
+	errfunc2 = lambda param, x, y, sig, x0: (fln(x, x0, param) - y)/sig
 
 	# fitting range
 	if len(xlim) == 2:
@@ -56,23 +56,29 @@ def plawfit(x, y, pini, sig=None, xlim=[], cutzero=True, mode='lin', printres=Tr
 	if mode == 'lin':
 		if type(sig).__name__ == 'NoneType':
 			sig_fit = 1
-		res = leastsq(errfunc, pini, args=(x_fit, y_fit, sig_fit), full_output=True)
+		if type(x0).__name__ == 'NoneType':
+			x0_fit = 1
+		res = leastsq(errfunc, pini, args=(x_fit, y_fit, sig_fit, x0_fit), full_output=True)
 		pout = res[0]
 		pcov = res[1]
-		chi2 = np.sum(errfunc(pout, x_fit, y_fit, sig_fit)**2.)
+		chi2 = np.sum(errfunc(pout, x_fit, y_fit, sig_fit, x0_fit)**2.)
 	elif mode == 'log':
+		if type(x0).__name__ == 'NoneType':
+			x0_fit = 0.
+		else:
+			x0_fit = np.log10(x0)
 		if type(sig).__name__ == 'NoneType':
 			sig_fit = 1
 			res = leastsq(errfunc2, pini,
-				args=(np.log10(x_fit), np.log10(y_fit), sig_fit),
+				args=(np.log10(x_fit), np.log10(y_fit), sig_fit, x0_fit),
 				full_output=True)
 		else:
 			res = leastsq(errfunc2, pini,
-				args=(np.log10(x_fit), np.log10(y_fit), sig_fit/(y_fit*np.log(10))),
+				args=(np.log10(x_fit), np.log10(y_fit), sig_fit/(y_fit*np.log(10)), x0_fit),
 				full_output=True)
 		pout = res[0]
 		pcov = res[1]
-		chi2 = np.sum(errfunc2(pout, np.log10(x_fit), np.log10(y_fit), sig_fit/(y_fit*np.log(10)))**2.)
+		chi2 = np.sum(errfunc2(pout, np.log10(x_fit), np.log10(y_fit), sig_fit/(y_fit*np.log(10)), x0_fit)**2.)
 	else:
 		print('ERROR\tplawfit: mode must be lin or log.')
 		return

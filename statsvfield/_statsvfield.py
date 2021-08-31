@@ -63,6 +63,8 @@ class StatsVfield():
 			print ('ERROR: Dimension must be <= 3.')
 			return
 
+		self.acf   = []
+		self.sf    = []
 		self.tau_x = []
 
 
@@ -87,7 +89,10 @@ class StatsVfield():
 			else:
 				self.sf, self.sf_err = sf_1d(self.data, derr=self.derr)
 		elif self.ndim == 2:
-			self.sf = sf_2d(self.data)
+			if len(self.derr) == 0:
+				self.sf = sf_2d(self.data)
+			else:
+				self.sf, self.sf_err = sf_2d(self.data, derr=self.derr)
 		elif self.ndim == 3:
 			print ('3D is being developed.')
 			return
@@ -123,7 +128,10 @@ class StatsVfield():
 			if method == 'FFT':
 				self.acf = ac_fft2(self.data)
 			elif method == 'iterative':
-				self.acf = ac_2d(self.data)
+				if len(self.derr) == 0:
+					self.acf = ac_2d(self.data)
+				else:
+					self.acf, self.acf_err = ac_2d(self.data, derr=self.derr)
 
 		#if len(self.tau_x) == 0:
 		self.get_tau(realfreq=realfreq)
@@ -170,6 +178,32 @@ class StatsVfield():
 		elif self.ndim == 3:
 			print ('3D is being developed.')
 			return
+
+
+	def collapse(self):
+		if self.ndim == 1:
+			print ('Data is one dimensional. No more collapse.')
+			return
+		elif self.ndim == 2:
+			tau_xx, tau_yy = np.meshgrid(self.tau_x, self.tau_y)
+			tau_rr         = np.sqrt(tau_xx*tau_xx + tau_yy*tau_yy)
+			tau_sort       = np.unique(tau_rr)
+			self.tau_col   = tau_sort
+
+		if len(self.acf) != 0:
+			self.acf_col = np.array([
+				np.nanmean(self.acf[tau_rr == tau_i]) for tau_i in tau_sort])
+			self.acf_err_col = np.array([
+				np.sqrt(np.nansum(self.acf_err[tau_rr == tau_i]**2))/np.count_nonzero(~np.isnan(self.acf_err[tau_rr == tau_i]))
+				 for tau_i in tau_sort])
+
+		if len(self.sf) !=0:
+			self.sf_col = np.array([
+				np.nanmean(self.sf[tau_rr == tau_i]) for tau_i in tau_sort])
+			self.sf_err_col = np.array([
+				np.sqrt(np.nansum(self.sf_err[tau_rr == tau_i]**2))/np.count_nonzero(~np.isnan(self.sf_err[tau_rr == tau_i]))
+				 for tau_i in tau_sort])
+
 
 	def get_tauzero(self):
 
@@ -344,7 +378,7 @@ def ac_fft1(data, realfreq=False):
 	return d_ac
 
 
-def ac_2d(data):
+def ac_2d(data, derr=[]):
 	'''
 	Calculate auto-correlation.
 
@@ -382,7 +416,35 @@ def ac_2d(data):
 
 	d_ac /= np.nanvar(data)
 
-	return d_ac
+
+	if len(derr) == 0:
+		return d_ac
+	else:
+		# error propagation
+
+		# zero-padding
+		d_in_err = derr.copy()
+		d_in_err = np.r_[d_in_err, np.zeros((d_in_err.shape[0]-1, d_in_err.shape[1]))]
+		d_in_err = np.c_[d_in_err, np.zeros((d_in_err.shape[0], d_in_err.shape[1]-1))]
+
+		d_shift_err = derr.copy()
+		d_shift_err = np.r_[np.zeros((d_shift_err.shape[0]-1, d_shift_err.shape[1])), d_shift_err]
+		d_shift_err = np.c_[np.zeros((d_shift_err.shape[0], d_shift_err.shape[1]-1)), d_shift_err]
+
+		d_in_err[d_in_err == 0.]       = np.nan
+		d_shift_err[d_shift_err == 0.] = np.nan
+
+		# error of each element:
+		#  (m1 +/- sig1)*(m2 +/- sig2) = m1*m2 +/- sqrt((m1*sig2)^2 + (m2*sig1)^2)
+		# error of mean
+		#  sqrt(Sum(sig_i^2))/N
+		d_ac_err = np.array([[
+			np.sqrt(np.nansum((d_in[:nx_out - k, :ny_out - l]*d_shift_err[k:nx_out, l:ny_out])**2 \
+					+ (d_in_err[:nx_out - k, :ny_out - l]*d_shift[k:nx_out, l:ny_out])**2))\
+				/np.count_nonzero(~np.isnan(d_in[:nx_out - k, :ny_out - l]*d_shift[k:nx_out, l:ny_out]))
+				for l in range(ny_out)] for k in range(nx_out)]
+				)/np.nanvar(data)
+		return d_ac, d_ac_err
 
 
 def ac_fft2(data):
@@ -453,7 +515,7 @@ def sf_1d(data, derr=[]):
 		return d_sf, d_sf_err
 
 
-def sf_2d(data, normalize=False):
+def sf_2d(data, derr=[], normalize=False):
 	'''
 	Calculate auto-correlation.
 
@@ -492,7 +554,29 @@ def sf_2d(data, normalize=False):
 	if normalize:
 		d_sf /= d_sf[0,0]
 
-	return d_sf
+	if len(derr) == 0:
+		return d_sf
+	else:
+		# error propagation
+
+		# zero-padding
+		d_in_err = derr.copy()
+		d_in_err = np.r_[d_in_err, np.zeros((d_in_err.shape[0]-1, d_in_err.shape[1]))]
+		d_in_err = np.c_[d_in_err, np.zeros((d_in_err.shape[0], d_in_err.shape[1]-1))]
+
+		d_shift_err = derr.copy()
+		d_shift_err = np.r_[np.zeros((d_shift_err.shape[0]-1, d_shift_err.shape[1])), d_shift_err]
+		d_shift_err = np.c_[np.zeros((d_shift_err.shape[0], d_shift_err.shape[1]-1)), d_shift_err]
+
+		d_in_err[d_in_err == 0.]       = np.nan
+		d_shift_err[d_shift_err == 0.] = np.nan
+
+		d_sf_err = np.array([[
+			np.sqrt(np.nansum((4.* (d_in[:nx_out - k, :ny_out - l] - d_shift[k:nx_out, l:ny_out])**2.\
+				* (d_in_err[:nx_out - k, :ny_out - l]**2. + d_shift_err[k:nx_out, l:ny_out]**2.))))\
+			/np.count_nonzero(~np.isnan(d_in[:nx_out - k, :ny_out - l] - d_shift[k:nx_out, l:ny_out]))
+			for l in range(ny_out)] for k in range(nx_out)])
+		return d_sf, d_sf_err
 
 
 def pspec_1d(data, realfreq=False):
